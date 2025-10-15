@@ -34,6 +34,7 @@ log_data "Sleeping for 5s..."
 sleep 5
 
 log_data "Applying changes to dns_resolver"
+# Use curl to restart the DNS service (via POST)
 curl_output=`curl -k -X POST  https://home.chessman.net/api/v2/services/dns_resolver/apply -H 'accept:application/json' -H 'Content-Type: application/json' -H 'X-API-Key: <Insert API key here>'` | jq
 
 log_data "Sleeping for 30s..."
