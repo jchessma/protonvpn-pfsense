@@ -9,14 +9,16 @@ Requirements are pretty limited. Mainly you need a ProtonVPN account, appropriat
 
 There are three separate scripts here (that's how I chose to do things, there are different, and likely better, ways to achieve the same goals):
  * scraper.py - Python script to scrape the ProtonVPN downloads page screen
+ * config.json - Configuration file (JSON format) containing the username, password, mailbox password, and TOTP secret key
  * scrapeProton.sh - BASH script to execute the above Python script, store the resulting IP in a file, and SCP the file to a pfSense server
  * updateVPN.sh - BASH script that I run on my pfSense box to update the DNS name (I use "fastest.protonvpn.com"), restart DNS, and restart the OpenVPN client
 
 Within Python you need the following libraries installed: pyotp, undetected_chromedriver, selenium, time, inspect
 
 For the Python script to work you need to ensure the above Python 3 libraries are installed (pip3 install ...) and update the script as follows:
- * Replace the username, password, mailbox password, and TOTP secret key as appropriate
+ * Replace the username, password, mailbox password, and TOTP secret key as appropriate in the config.json file
  * Update the list of states (I'm US based and wrote this on that basis but there is no reason it can't be easily modified to support other regions, on my todo list)
+ * Change the output filename if desired
  * Update the list of keys/values of the chosen specific servers and their associated IP's (also something on my todo list to make this more automated)
 
 For the BASH script (scrapeProton.sh) to run you need to update the IP/username (and ensure you can SSH/SCP to your pfSense server)
