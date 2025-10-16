@@ -12,6 +12,7 @@ There are three separate scripts here (that's how I chose to do things, there ar
  * config.json - Configuration file (JSON format) containing the username, password, mailbox password, and TOTP secret key
  * scrapeProton.sh - BASH script to execute the above Python script, store the resulting IP in a file, and SCP the file to a pfSense server
  * updateVPN.sh - BASH script that I run on my pfSense box to update the DNS name (I use "fastest.protonvpn.com"), restart DNS, and restart the OpenVPN client
+ * server_map.json - JSON file containing a map of ProtonVPN server names to their corresponding IP address (I manually downloaded each file in the US to create this map)
 
 Within Python you need the following libraries installed: pyotp, undetected_chromedriver, selenium, time, inspect
 
