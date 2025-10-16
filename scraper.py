@@ -6,7 +6,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 import time
 import inspect
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Set
 import re
 import json
 import os
@@ -14,6 +14,7 @@ import os
 # --- CONFIGURATION CONSTANTS ---
 CONFIG_FILE = "config.json"
 SERVER_MAP_FILE = "server_map.json"
+NON_P2P_SERVERS_FILE = "non-p2p-servers.json" # Non-P2P list file
 LOGIN_URL = "https://account.protonvpn.com/login"
 DOWNLOAD_URL = "https://account.protonvpn.com/downloads"
 OUTPUT_FILE_NAME = "best_server_ip.txt" 
@@ -30,18 +31,15 @@ CONTINUE_BUTTON_SELECTOR = "button.w-full.button-large.button-solid-norm.mt-6"
 US_COUNTRY_DETAILS_XPATH = '//*[@id="openvpn-configuration-files"]/div/div[6]/div[2]/details[122]'
 SERVER_TABLE_XPATH = f'{US_COUNTRY_DETAILS_XPATH}/div/div/table'
 
-# Server mapping data structure (Keep outside the main logic, maybe load from a file)
-KEYS = ["us-ma-01","us-ma-05","us-ma-09","us-ma-11","us-ma-15","us-ma-19","us-ma-40","us-ma-44","us-ma-48","us-ma-50","us-ma-54","us-ma-58","us-nj-09","us-nj-114","us-nj-118","us-nj-12","us-nj-141","us-nj-145","us-nj-149","us-nj-214","us-nj-218","us-nj-241","us-nj-245","us-nj-47","us-ny-179","us-ny-424","us-ny-479","us-ny-520","us-ny-524","us-ny-528","us-ny-579","us-ny-620","us-ny-624","us-ny-679","us-ny-720","us-ny-724"]
-VALUES = ["79.127.160.187","79.127.160.187","79.127.160.187","79.127.160.187","79.127.160.187","79.127.160.187","79.127.160.158","79.127.160.158","79.127.160.158","79.127.160.158","79.127.160.158","79.127.160.129","69.10.63.242","163.5.171.83","163.5.171.83","69.10.63.242","205.142.240.210","205.142.240.210","205.142.240.210","151.243.141.4","151.243.141.4","151.243.141.4","151.243.141.5","163.5.171.2","146.70.202.162","143.244.44.186","89.187.178.173","146.70.72.130","146.70.72.130","146.70.72.130","146.70.202.66","146.70.202.18","146.70.202.18","149.40.49.1","149.40.49.30","149.40.49.30"]
-PROTON_DICT = dict(zip(KEYS, VALUES))
-
-# Global variables for credentials, will be loaded in main
+# Global variables for data, will be loaded in main
 USERNAME = ""
 PASSWORD = ""
 MAILBOX_PASSWORD = ""
 TOTP_SECRET_KEY = ""
+PROTON_DICT = {}
+NON_P2P_SERVERS: Set[str] = set()
 
-# --- CREDENTIAL LOADING FUNCTION ---
+# --- DATA LOADING FUNCTIONS ---
 def load_credentials(file_path: str):
     """Loads credentials from a JSON configuration file."""
     global USERNAME, PASSWORD, MAILBOX_PASSWORD, TOTP_SECRET_KEY
@@ -53,12 +51,11 @@ def load_credentials(file_path: str):
         with open(file_path, 'r') as f:
             config = json.load(f)
             
-        USERNAME = config["USERNAME"]
-        PASSWORD = config["PASSWORD"]
-        MAILBOX_PASSWORD = config["MAILBOX_PASSWORD"]
-        TOTP_SECRET_KEY = config["TOTP_SECRET_KEY"]
+        USERNAME = config.get("USERNAME", "")
+        PASSWORD = config.get("PASSWORD", "")
+        MAILBOX_PASSWORD = config.get("MAILBOX_PASSWORD", "")
+        TOTP_SECRET_KEY = config.get("TOTP_SECRET_KEY", "")
         
-        # Basic check to ensure credentials were loaded
         if not all([USERNAME, PASSWORD, TOTP_SECRET_KEY]):
              raise ValueError("One or more required credentials (USERNAME, PASSWORD, TOTP_SECRET_KEY) are missing or empty in config.json.")
              
@@ -83,12 +80,34 @@ def load_server_map(file_path: str):
              
     except json.JSONDecodeError:
         raise ValueError(f"Error decoding JSON from {file_path}. Check for syntax errors.")
+
+def load_non_p2p_servers(file_path: str):
+    """Loads the list of servers that should be avoided into a global set."""
+    global NON_P2P_SERVERS
+    
+    if not os.path.exists(file_path):
+        print(f"Warning: Non-P2P server list file not found: {file_path}. Proceeding without filtering.")
+        return
         
+    try:
+        with open(file_path, 'r') as f:
+            server_list = json.load(f)
+            # Ensure loaded data is a list and convert to a set for O(1) lookups
+            if isinstance(server_list, list):
+                NON_P2P_SERVERS = set(server_list)
+                print(f"Loaded {len(NON_P2P_SERVERS)} servers to be avoided.")
+            else:
+                raise ValueError("Content of non-p2p-servers.json must be a JSON list.")
+             
+    except json.JSONDecodeError:
+        raise ValueError(f"Error decoding JSON from {file_path}. Check for syntax errors.")
+    except Exception as e:
+        raise Exception(f"Failed to load non-P2P servers: {e}")
+
 # --- HELPER FUNCTIONS ---
 
 def get_totp_code() -> str:
     """Generates the current TOTP code using the loaded secret key."""
-    # Ensure TOTP_SECRET_KEY is loaded before using it
     if not TOTP_SECRET_KEY:
         raise ValueError("TOTP_SECRET_KEY is empty. Cannot generate TOTP.")
         
@@ -135,16 +154,33 @@ def extract_table_data(driver: uc.Chrome) -> List[List[str]]:
 
 def find_lowest_utilization_server(table_data: List[List[str]]) -> Tuple[str, int]:
     """Processes table data to find the server with the lowest utilization
-       among the specified states."""
+       among the specified states, excluding servers in the NON_P2P_SERVERS set."""
     
     lowest_server_key = ""
     lowest_utilization = 101
     state_pattern = re.compile(r'us-([a-z]{2})#\d+', re.IGNORECASE)
-
+    
+    # Sort the table data by utilization ascending to find the best server efficiently
+    # Note: This is an extra step but ensures we check the lowest-load servers first.
+    # We must first extract the utilization percentage to sort correctly.
+    processed_rows = []
     for row in table_data:
         try:
-            server_name = row[0].strip()
             utilization_str = row[2].strip()
+            percent_str = re.sub(r'[^0-9]', '', utilization_str)
+            if percent_str:
+                utilization = int(percent_str)
+                processed_rows.append((utilization, row))
+        except (IndexError, ValueError):
+            continue # Skip malformed rows
+    
+    # Sort by utilization (index 0 of the tuple)
+    processed_rows.sort(key=lambda x: x[0])
+
+    print("Searching for the lowest utilization server (excluding forbidden servers)...")
+    for utilization, row in processed_rows:
+        try:
+            server_name = row[0].strip()
             
             match = state_pattern.search(server_name)
             if not match: continue
@@ -152,25 +188,26 @@ def find_lowest_utilization_server(table_data: List[List[str]]) -> Tuple[str, in
             state_code = match.group(1).upper()
 
             if state_code in STATES:
-                percent_str = re.sub(r'[^0-9]', '', utilization_str)
-                if not percent_str: continue
-                    
-                percent = int(percent_str)
+                server_key = server_name.replace('#','-').lower()
                 
-                if percent < lowest_utilization:
-                    server_key = server_name.replace('#','-').lower()
-                    
-                    # Uses the globally loaded PROTON_DICT
-                    if server_key in PROTON_DICT:
-                        lowest_server_key = server_key
-                        lowest_utilization = percent
+                # Check if the server is in the forbidden list
+                if server_key in NON_P2P_SERVERS:
+                    print(f"Skipping server {server_key} ({utilization}%): Found in non-P2P list.")
+                    continue
+                
+                # Check against the IP map
+                if server_key in PROTON_DICT:
+                    # Since we are iterating through sorted list, the first one that passes
+                    # the state and non-P2P checks is the lowest utilization server.
+                    return server_key, utilization
                         
         except (IndexError, ValueError, Exception) as e:
             continue
 
     if not lowest_server_key:
-        raise ValueError("Could not find a valid server matching the state criteria.")
+        raise ValueError("Could not find a valid server matching the state and non-P2P criteria.")
         
+    # Fallback return (should ideally be hit only if the loop above is not used)
     return lowest_server_key, lowest_utilization
 
 # --- MAIN EXECUTION ---
@@ -179,12 +216,15 @@ if __name__ == "__main__":
     best_server_ip = None
 
     try:
-        # 1. Load Credentials First
+        # 1. Load Data Files First
         print(f"Loading credentials from {CONFIG_FILE}...")
         load_credentials(CONFIG_FILE)
         
         print(f"Loading server map from {SERVER_MAP_FILE}...")
         load_server_map(SERVER_MAP_FILE)
+        
+        print(f"Loading non-P2P servers from {NON_P2P_SERVERS_FILE}...")
+        load_non_p2p_servers(NON_P2P_SERVERS_FILE)
         
         # --- Driver Setup ---
         options = uc.ChromeOptions()
@@ -203,12 +243,10 @@ if __name__ == "__main__":
         driver.get(LOGIN_URL)
         
         print("Entering username...")
-        # Now uses the globally loaded USERNAME
         wait_and_find(driver, By.ID, USER_ID).send_keys(USERNAME) 
         safe_click(driver, By.CSS_SELECTOR, CONTINUE_BUTTON_SELECTOR)
         
         print("Entering password...")
-        # Now uses the globally loaded PASSWORD
         wait_and_find(driver, By.ID, PASS_ID).send_keys(PASSWORD)
         safe_click(driver, By.CSS_SELECTOR, CONTINUE_BUTTON_SELECTOR)
         
@@ -217,7 +255,6 @@ if __name__ == "__main__":
         wait_and_find(driver, By.ID, TOTP_ID).send_keys(totp)
         
         print("Entering mailbox password...")
-        # Now uses the globally loaded MAILBOX_PASSWORD
         wait_and_find(driver, By.ID, MAILBOX_PASSWORD_ID).send_keys(MAILBOX_PASSWORD)
         safe_click(driver, By.CSS_SELECTOR, CONTINUE_BUTTON_SELECTOR)
         
@@ -232,7 +269,8 @@ if __name__ == "__main__":
         
         # --- Data Processing and Result ---
         lowest_server_key, utilization = find_lowest_utilization_server(table_data)
-        best_server_ip = PROTON_DICT.get(lowest_server_key)
+        
+        best_server_ip = PROTON_DICT.get(lowest_server_key) 
         
         print("\n--- RESULT ---")
         print(f"Lowest Utilization Server Key: {lowest_server_key}")
