@@ -1,0 +1,7 @@
+# File to store secret information
+{
+    "USERNAME": "<Username>",
+    "PASSWORD": "<Password>",
+    "MAILBOX_PASSWORD": "<Mailbox Password>",
+    "TOTP_SECRET_KEY": "<TOTP Secret Key>"
+}
