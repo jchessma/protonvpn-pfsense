@@ -8,11 +8,12 @@ import time
 import inspect
 from typing import List, Dict, Any, Tuple
 import re
-import json # NEW: Import the json module
-import os   # NEW: Import the os module for path checking
+import json
+import os
 
 # --- CONFIGURATION CONSTANTS ---
-CONFIG_FILE = "config.json" # NEW: Name of the configuration file
+CONFIG_FILE = "config.json"
+SERVER_MAP_FILE = "server_map.json"
 LOGIN_URL = "https://account.protonvpn.com/login"
 DOWNLOAD_URL = "https://account.protonvpn.com/downloads"
 OUTPUT_FILE_NAME = "best_server_ip.txt" 
@@ -66,6 +67,23 @@ def load_credentials(file_path: str):
     except KeyError as e:
         raise ValueError(f"Missing required key in config.json: {e}. Check that all keys are present and correctly spelled.")
 
+def load_server_map(file_path: str):
+    """Loads the server key-to-IP mapping from a JSON file."""
+    global PROTON_DICT
+    
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Server map file not found: {file_path}. Please create it.")
+        
+    try:
+        with open(file_path, 'r') as f:
+            PROTON_DICT = json.load(f)
+            
+        if not PROTON_DICT:
+             raise ValueError("Server map loaded but is empty. Check server_map.json content.")
+             
+    except json.JSONDecodeError:
+        raise ValueError(f"Error decoding JSON from {file_path}. Check for syntax errors.")
+        
 # --- HELPER FUNCTIONS ---
 
 def get_totp_code() -> str:
@@ -142,6 +160,7 @@ def find_lowest_utilization_server(table_data: List[List[str]]) -> Tuple[str, in
                 if percent < lowest_utilization:
                     server_key = server_name.replace('#','-').lower()
                     
+                    # Uses the globally loaded PROTON_DICT
                     if server_key in PROTON_DICT:
                         lowest_server_key = server_key
                         lowest_utilization = percent
@@ -163,6 +182,9 @@ if __name__ == "__main__":
         # 1. Load Credentials First
         print(f"Loading credentials from {CONFIG_FILE}...")
         load_credentials(CONFIG_FILE)
+        
+        print(f"Loading server map from {SERVER_MAP_FILE}...")
+        load_server_map(SERVER_MAP_FILE)
         
         # --- Driver Setup ---
         options = uc.ChromeOptions()
