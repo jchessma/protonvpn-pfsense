@@ -1,173 +1,241 @@
 import pyotp
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, WebDriverException
 import time
 import inspect
+from typing import List, Dict, Any, Tuple
+import re
+import json # NEW: Import the json module
+import os   # NEW: Import the os module for path checking
 
-# Some URL's that are required
-login_url = "https://account.protonvpn.com/login"
-downloadURL = "https://account.protonvpn.com/downloads"
+# --- CONFIGURATION CONSTANTS ---
+CONFIG_FILE = "config.json" # NEW: Name of the configuration file
+LOGIN_URL = "https://account.protonvpn.com/login"
+DOWNLOAD_URL = "https://account.protonvpn.com/downloads"
+OUTPUT_FILE_NAME = "best_server_ip.txt" 
 
-# Credentials
-username = "<Insert Username>"
-password = "<Insert Password>"
-mailboxPassword = "<Insert Mailbox Password>"
+# Server filtering
+STATES = ["MA", "NY", "NJ"]
 
-# These are the states to choose from
-states = ["MA", "NY", "NJ"]
+# Selenium Selectors
+USER_ID = "username"
+PASS_ID = "password"
+TOTP_ID = "totp"
+MAILBOX_PASSWORD_ID = "mailboxPassword"
+CONTINUE_BUTTON_SELECTOR = "button.w-full.button-large.button-solid-norm.mt-6"
+US_COUNTRY_DETAILS_XPATH = '//*[@id="openvpn-configuration-files"]/div/div[6]/div[2]/details[122]'
+SERVER_TABLE_XPATH = f'{US_COUNTRY_DETAILS_XPATH}/div/div/table'
 
-# DOM elements that Selenium searches for to enter text/click buttons/etc
-userID = "username"
-passID = "password"
-# TOTP element ID's are totp, totp-1, totp-2, totp-3, totp-4, totp-5
-totpID = "totp"
-bestServerClass = "button.button-medium.button-solid-norm" 
-textareaXPATH="/html/body/div[4]/dialog/form/div[2]/div[3]/div/div/div/div[2]/div/textarea"
-continueClass = "button.w-full.button-large.button-solid-norm.mt-6"
-mailboxPasswordID = "mailboxPassword"
+# Server mapping data structure (Keep outside the main logic, maybe load from a file)
+KEYS = ["us-ma-01","us-ma-05","us-ma-09","us-ma-11","us-ma-15","us-ma-19","us-ma-40","us-ma-44","us-ma-48","us-ma-50","us-ma-54","us-ma-58","us-nj-09","us-nj-114","us-nj-118","us-nj-12","us-nj-141","us-nj-145","us-nj-149","us-nj-214","us-nj-218","us-nj-241","us-nj-245","us-nj-47","us-ny-179","us-ny-424","us-ny-479","us-ny-520","us-ny-524","us-ny-528","us-ny-579","us-ny-620","us-ny-624","us-ny-679","us-ny-720","us-ny-724"]
+VALUES = ["79.127.160.187","79.127.160.187","79.127.160.187","79.127.160.187","79.127.160.187","79.127.160.187","79.127.160.158","79.127.160.158","79.127.160.158","79.127.160.158","79.127.160.158","79.127.160.129","69.10.63.242","163.5.171.83","163.5.171.83","69.10.63.242","205.142.240.210","205.142.240.210","205.142.240.210","151.243.141.4","151.243.141.4","151.243.141.4","151.243.141.5","163.5.171.2","146.70.202.162","143.244.44.186","89.187.178.173","146.70.72.130","146.70.72.130","146.70.72.130","146.70.202.66","146.70.202.18","146.70.202.18","149.40.49.1","149.40.49.30","149.40.49.30"]
+PROTON_DICT = dict(zip(KEYS, VALUES))
 
-# List of specific servers and their matching IP's stored in a dictionary
-keys = ["us-ma-01","us-ma-05","us-ma-09","us-ma-11","us-ma-15","us-ma-19","us-ma-40","us-ma-44","us-ma-48","us-ma-50","us-ma-54","us-ma-58","us-nj-09","us-nj-114","us-nj-118","us-nj-12","us-nj-141","us-nj-145","us-nj-149","us-nj-214","us-nj-218","us-nj-241","us-nj-245","us-nj-47","us-ny-179","us-ny-424","us-ny-479","us-ny-520","us-ny-524","us-ny-528","us-ny-579","us-ny-620","us-ny-624","us-ny-679","us-ny-720","us-ny-724"]
-values = ["79.127.160.187","79.127.160.187","79.127.160.187","79.127.160.187","79.127.160.187","79.127.160.187","79.127.160.158","79.127.160.158","79.127.160.158","79.127.160.158","79.127.160.158","79.127.160.129","69.10.63.242","163.5.171.83","163.5.171.83","69.10.63.242","205.142.240.210","205.142.240.210","205.142.240.210","151.243.141.4","151.243.141.4","151.243.141.4","151.243.141.5","163.5.171.2","146.70.202.162","143.244.44.186","89.187.178.173","146.70.72.130","146.70.72.130","146.70.72.130","146.70.202.66","146.70.202.18","146.70.202.18","149.40.49.1","149.40.49.30","149.40.49.30"]
-protonDict = dict(zip(keys, values))
+# Global variables for credentials, will be loaded in main
+USERNAME = ""
+PASSWORD = ""
+MAILBOX_PASSWORD = ""
+TOTP_SECRET_KEY = ""
 
-# Generate the TOTP from the secret key
-def genTOTP():
-    secretKey = "<Insert TOTP Secret Key>"
+# --- CREDENTIAL LOADING FUNCTION ---
+def load_credentials(file_path: str):
+    """Loads credentials from a JSON configuration file."""
+    global USERNAME, PASSWORD, MAILBOX_PASSWORD, TOTP_SECRET_KEY
+    
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"Configuration file not found: {file_path}. Please create it.")
+        
+    try:
+        with open(file_path, 'r') as f:
+            config = json.load(f)
+            
+        USERNAME = config["USERNAME"]
+        PASSWORD = config["PASSWORD"]
+        MAILBOX_PASSWORD = config["MAILBOX_PASSWORD"]
+        TOTP_SECRET_KEY = config["TOTP_SECRET_KEY"]
+        
+        # Basic check to ensure credentials were loaded
+        if not all([USERNAME, PASSWORD, TOTP_SECRET_KEY]):
+             raise ValueError("One or more required credentials (USERNAME, PASSWORD, TOTP_SECRET_KEY) are missing or empty in config.json.")
+             
+    except json.JSONDecodeError:
+        raise ValueError(f"Error decoding JSON from {file_path}. Check for syntax errors.")
+    except KeyError as e:
+        raise ValueError(f"Missing required key in config.json: {e}. Check that all keys are present and correctly spelled.")
 
-    totp = pyotp.TOTP(secretKey)
-    return(totp.now())
+# --- HELPER FUNCTIONS ---
 
-if __name__ == "__main__":
+def get_totp_code() -> str:
+    """Generates the current TOTP code using the loaded secret key."""
+    # Ensure TOTP_SECRET_KEY is loaded before using it
+    if not TOTP_SECRET_KEY:
+        raise ValueError("TOTP_SECRET_KEY is empty. Cannot generate TOTP.")
+        
+    totp = pyotp.TOTP(TOTP_SECRET_KEY)
+    return totp.now()
 
-    # instantiate Chrome options
-    options = uc.ChromeOptions()
-    # add headless mode
-    options.headless = True
-
-    # instantiate a Chrome browser and add the options
-    driver = uc.Chrome(
-        use_subprocess=False,
-        options=options,
+def wait_and_find(driver: uc.Chrome, by: By, value: str, timeout: int = 20):
+    """Waits for an element to be visible before finding and returning it."""
+    return WebDriverWait(driver, timeout).until(
+        EC.visibility_of_element_located((by, value))
     )
 
-    # visit the target URL
+def safe_click(driver: uc.Chrome, by: By, value: str, timeout: int = 20):
+    """Waits for an element to be clickable and then clicks it."""
+    element = WebDriverWait(driver, timeout).until(
+        EC.element_to_be_clickable((by, value))
+    )
+    element.click()
+
+def extract_table_data(driver: uc.Chrome) -> List[List[str]]:
+    """Navigates to the download page and extracts the server table data."""
+    print("Navigating to the download page...")
+    driver.get(DOWNLOAD_URL)
+
     try:
-        driver.get(login_url)
-    except Exception as e:
-        print(f"{inspect.currentframe().f_lineno} Exception occurred: {e}")
-    
-    # Find the username field and enter it
-    try:
-        usernameElem = driver.find_element(By.ID, userID)
-        usernameElem.send_keys(username)
-        time.sleep(1)
-    except Exception as e:
-        print(f"{inspect.currentframe().f_lineno} Exception occurred: {e}")
-    
-    # Click to continue
-    try:
-        driver.find_element(By.CSS_SELECTOR, continueClass).click()    
-        time.sleep(5)
-    except Exception as e:
-        print(f"{inspect.currentframe().f_lineno} Exception Occurred: {e}")
-    
-    # Find the password field and enter it
-    try:
-        passwordElem = driver.find_element(By.ID, passID)
-        passwordElem.send_keys(password)
-        time.sleep(1)
-    except Exception as e:
-        print(f"{inspect.currentframe().f_lineno} Exception Occurred: {e}")
-    
-    # Click to continue
-    try:
-        driver.find_element(By.CSS_SELECTOR, continueClass).click()
-        time.sleep(5)
-    except Exception as e:
-        print(f"{inspect.currentframe().f_lineno} Exception Occurred: {e}")
-    
-    # Generate the TOTP
-    totp = genTOTP()
-    
-    # Find the first TOTP entry field
-    try:
-        totpElem = driver.find_element(By.ID, totpID)
-        totpElem.send_keys(totp)
-        time.sleep(5)
-    except Exception as e:
-        print(f"{inspect.currentframe().f_lineno} Exception Occurred: {e}")
-  
-    # Enter mailbox password
-    try:    
-        mailboxPwdElem = driver.find_element(By.ID, mailboxPasswordID)
-        mailboxPwdElem.send_keys(mailboxPassword)
-        time.sleep(1)
-    except Exception as e:
-        print(f"{inspect.currentframe().f_lineno} Exception Occurred: {e}")
-    
-    # Click to continue
-    try:
-        driver.find_element(By.CSS_SELECTOR, continueClass).click()
-        time.sleep(10)
-    except Exception as e:
-        print(f"{inspect.currentframe().f_lineno} Exception Occurred: {e}")
-    
-    # Navigate to the download page
-    try:
-        driver.get(downloadURL)
-        time.sleep(5)
-    except Exception as e:
-        print(f"{inspect.currentframe().f_lineno} Exception occurred: {e}")
+        # Wait for and expand the country section (e.g., US)
+        country_element = wait_and_find(driver, By.XPATH, US_COUNTRY_DETAILS_XPATH)
+        driver.execute_script("arguments[0].setAttribute('open', '')", country_element)
         
-    try:
-        countryElement = driver.find_element(By.XPATH, '//*[@id="openvpn-configuration-files"]/div/div[6]/div[2]/details[122]')
-        driver.execute_script("arguments[0].setAttribute('open', '')", countryElement)
-        time.sleep(3)
-    except Exception as e:
-        print(f"{inspect.currentframe().f_lineno} Exception occurred: {e}")
+        # Wait for the table to become visible after expanding the section
+        table = wait_and_find(driver, By.XPATH, SERVER_TABLE_XPATH)
+    except TimeoutException:
+        raise Exception("Timed out waiting for server list table to load.")
+
+    table_data = []
+    rows = table.find_elements(By.TAG_NAME, "tr")
     
-    try:
-        table = driver.find_element(By.XPATH, '//*[@id="openvpn-configuration-files"]/div/div[6]/div[2]/details[122]/div/div/table')
-        time.sleep(2)
-    except Exception as e:
-        print(f"{inspect.currentframe().f_lineno} Exception occurred: {e}")
+    for row in rows[1:]:
+        cells = row.find_elements(By.TAG_NAME, "td")
+        if cells:
+             table_data.append([cell.text.strip() for cell in cells])
+
+    return table_data
+
+def find_lowest_utilization_server(table_data: List[List[str]]) -> Tuple[str, int]:
+    """Processes table data to find the server with the lowest utilization
+       among the specified states."""
     
-    try:
-        tableData = []
-        
-        rows = table.find_elements(By.TAG_NAME, "tr")
-        for row in rows:
-            rowData = []
-            cells = row.find_elements(By.TAG_NAME, "td")
-            for cell in cells:
-                rowData.append(cell.text)
-            tableData.append(rowData)
-    except Exception as e:
-        print(f"{inspect.currentframe().f_lineno} Exception occurred: {e}")
-        
-    validRows = []
-    
-    # Parse the data and find the fastest, closest server
-    for row in tableData:
-        # Try parsing the row, if it fails, move on
-        # We are looking for servers from the list states
+    lowest_server_key = ""
+    lowest_utilization = 101
+    state_pattern = re.compile(r'us-([a-z]{2})#\d+', re.IGNORECASE)
+
+    for row in table_data:
         try:
-            if any(sub in row[0] for sub in states):
-                # Found a matching row, add it to the tracker
-                validRows.append(row)
-        except Exception as e:
-            pass
-    
-    # Look for the least loaded server
-    lowestRow = ["", 100]
-    for row in validRows:
-        percent = int(row[2].split('%')[0])
-        if percent < lowestRow[1]:
-            lowestRow[0] = row[0].replace('#','-').lower()
-            lowestRow[1] = percent
-    
-    # Print the lowest load server IP
-    print(protonDict[lowestRow[0]])
+            server_name = row[0].strip()
+            utilization_str = row[2].strip()
+            
+            match = state_pattern.search(server_name)
+            if not match: continue
+                 
+            state_code = match.group(1).upper()
+
+            if state_code in STATES:
+                percent_str = re.sub(r'[^0-9]', '', utilization_str)
+                if not percent_str: continue
+                    
+                percent = int(percent_str)
+                
+                if percent < lowest_utilization:
+                    server_key = server_name.replace('#','-').lower()
+                    
+                    if server_key in PROTON_DICT:
+                        lowest_server_key = server_key
+                        lowest_utilization = percent
+                        
+        except (IndexError, ValueError, Exception) as e:
+            continue
+
+    if not lowest_server_key:
+        raise ValueError("Could not find a valid server matching the state criteria.")
         
-    driver.quit()
+    return lowest_server_key, lowest_utilization
+
+# --- MAIN EXECUTION ---
+if __name__ == "__main__":
+    driver = None
+    best_server_ip = None
+
+    try:
+        # 1. Load Credentials First
+        print(f"Loading credentials from {CONFIG_FILE}...")
+        load_credentials(CONFIG_FILE)
+        
+        # --- Driver Setup ---
+        options = uc.ChromeOptions()
+        options.headless = True
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+
+        print("Initializing WebDriver...")
+        driver = uc.Chrome(
+            use_subprocess=False,
+            options=options,
+        )
+
+        # --- Login Flow ---
+        print(f"Visiting login URL: {LOGIN_URL}")
+        driver.get(LOGIN_URL)
+        
+        print("Entering username...")
+        # Now uses the globally loaded USERNAME
+        wait_and_find(driver, By.ID, USER_ID).send_keys(USERNAME) 
+        safe_click(driver, By.CSS_SELECTOR, CONTINUE_BUTTON_SELECTOR)
+        
+        print("Entering password...")
+        # Now uses the globally loaded PASSWORD
+        wait_and_find(driver, By.ID, PASS_ID).send_keys(PASSWORD)
+        safe_click(driver, By.CSS_SELECTOR, CONTINUE_BUTTON_SELECTOR)
+        
+        print("Entering TOTP...")
+        totp = get_totp_code()
+        wait_and_find(driver, By.ID, TOTP_ID).send_keys(totp)
+        
+        print("Entering mailbox password...")
+        # Now uses the globally loaded MAILBOX_PASSWORD
+        wait_and_find(driver, By.ID, MAILBOX_PASSWORD_ID).send_keys(MAILBOX_PASSWORD)
+        safe_click(driver, By.CSS_SELECTOR, CONTINUE_BUTTON_SELECTOR)
+        
+        print("Login complete. Waiting for dashboard...")
+        WebDriverWait(driver, 20).until(
+            EC.url_changes(LOGIN_URL) 
+        )
+
+        # --- Data Extraction ---
+        table_data = extract_table_data(driver)
+        print(f"Successfully extracted {len(table_data)} server rows.")
+        
+        # --- Data Processing and Result ---
+        lowest_server_key, utilization = find_lowest_utilization_server(table_data)
+        best_server_ip = PROTON_DICT.get(lowest_server_key)
+        
+        print("\n--- RESULT ---")
+        print(f"Lowest Utilization Server Key: {lowest_server_key}")
+        print(f"Utilization: {utilization}%")
+        print(f"**Best Server IP Address: {best_server_ip}**")
+
+    except (TimeoutException, NoSuchElementException, WebDriverException) as e:
+        print(f"\n--- FATAL ERROR (LINE {inspect.currentframe().f_lineno}) ---")
+        print(f"A Selenium error occurred: {type(e).__name__} - {e}")
+        if driver:
+            driver.save_screenshot("error_screenshot.png")
+            print("Saved error_screenshot.png for debugging.")
+    except Exception as e:
+        print(f"\n--- FATAL ERROR (LINE {inspect.currentframe().f_lineno}) ---")
+        print(f"An unexpected error occurred: {type(e).__name__} - {e}")
+    finally:
+        # --- File Output and Cleanup ---
+        if best_server_ip:
+            try:
+                with open(OUTPUT_FILE_NAME, 'w') as f:
+                    f.write(best_server_ip)
+                print(f"✅ IP address successfully written to **{OUTPUT_FILE_NAME}**")
+            except IOError as e:
+                print(f"❌ Failed to write IP to file {OUTPUT_FILE_NAME}: {e}")
+                
+        if driver:
+            print("Closing WebDriver.")
+            driver.quit()
