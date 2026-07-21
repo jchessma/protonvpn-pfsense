@@ -1,0 +1,38 @@
+{
+  "USERNAME": "your-protonvpn-username",
+  "PASSWORD": "your-protonvpn-password",
+  "MAILBOX_PASSWORD": "your-protonvpn-mailbox-password",
+  "TOTP_SECRET_KEY": "your-totp-secret-key",
+  "PFSENSE_BASE_URL": "https://your-pfsense-host",
+  "PFSENSE_API_KEY": "your-pfsense-api-key",
+  "PFSENSE_VERIFY_TLS": true,
+  "DNS_HOST": "fastest",
+  "DNS_DOMAIN": "protonvpn.com",
+  "OPENVPN_VPNID": 1,
+  "OUTPUT_FILE": "/tmp/tmpIPFile.txt",
+  "LOGIN_URL": "https://account.protonvpn.com/login",
+  "DOWNLOAD_URL": "https://account.protonvpn.com/downloads",
+  "STATES": [
+    "MA",
+    "NY",
+    "NJ"
+  ],
+  "COUNTRY_NAME": "United States",
+  "USER_ID": "username",
+  "PASS_ID": "password",
+  "TOTP_ID": "totp",
+  "MAILBOX_PASSWORD_ID": "mailboxPassword",
+  "CONTINUE_BUTTON_SELECTOR": "button.w-full.button-large.button-solid-norm.mt-6",
+  "ERROR_BANNER_SELECTOR": "[role=\"alert\"]",
+  "BENIGN_BANNER_PHRASES": [
+    "remember your password"
+  ],
+  "ELEMENT_WAIT_TIMEOUT": 20,
+  "LOGIN_ERROR_CHECK_TIMEOUT": 3,
+  "DASHBOARD_WAIT_TIMEOUT": 20,
+  "APPLY_WAIT_SECONDS": 5,
+  "RESTART_WAIT_SECONDS": 30,
+  "P2P_ICON_SELECTOR": "span.mx-2",
+  "DOWNLOAD_BUTTON_XPATH": ".//button",
+  "DOWNLOAD_WAIT_TIMEOUT": 20
+}

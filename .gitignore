@@ -1,0 +1,24 @@
+# Real credentials/settings - copy config.example.json to config.json and fill in
+config.json
+
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# Runtime artifacts
+*.log
+error_screenshot.png
+best_server_ip.txt
+*.ovpn
+
+# Legacy/archived scripts, superseded data files, downloaded configs - not part
+# of the published project
+old/
+old2/
+tmp/
+vpn/
+
+# Local tooling, not project content
+.recall/
+.claude/
