@@ -1,0 +1,20 @@
+# Copy this file to find_vpn.conf on the pfSense box (same directory as
+# find_vpn.sh) and fill in real values. find_vpn.conf holds a live pfSense
+# API key - never commit it, chmod 600 it, and rotate the key if it's ever
+# exposed.
+
+PFSENSE_BASE_URL="https://your-pfsense-host"
+PFSENSE_API_KEY="your-pfsense-api-key"
+# "true" to verify pfSense's TLS cert, "false" to skip (self-signed certs)
+PFSENSE_VERIFY_TLS="false"
+
+DNS_HOST="fastest"
+DNS_DOMAIN="protonvpn.com"
+OPENVPN_VPNID="1"
+
+IP_FILE="/root/tmpIPFile.txt"
+BACKUP_FILE="/root/tmpIPFile.bak"
+LOG_FILE="/var/log/find_vpn.log"
+
+APPLY_WAIT_SECONDS=5
+RESTART_WAIT_SECONDS=30

@@ -1,5 +1,7 @@
 # Real credentials/settings - copy config.example.json to config.json and fill in
 config.json
+# Real credentials/settings for find_vpn.sh - copy find_vpn.conf.example and fill in
+find_vpn.conf
 
 # Python
 __pycache__/

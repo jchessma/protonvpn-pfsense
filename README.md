@@ -35,6 +35,19 @@ Everything tunable - selectors, timeouts, the state list, URLs, wait
 durations - lives in `config.json` and is reloaded fresh on every run, so
 adjusting to a ProtonVPN page change doesn't require editing code.
 
+### Alternative: `find_vpn.sh` (runs on pfSense itself)
+
+If you'd rather not enable the REST API's OpenVPN restart endpoint, or
+prefer the update step to run on-box, `find_vpn.sh` is a BSD-bash
+equivalent to `update_pfsense.py`'s DNS-update half, plus a local
+`pfSsh.php` restart instead of a REST API call for the restart itself. It
+expects the winning IP to already be copied to `IP_FILE` on the firewall
+(e.g. via `scp` from the off-box scraper, the way `scrapeProton.sh` used
+to). Like the Python scripts, it will not restart OpenVPN if the DNS
+update failed. Configuration lives in `find_vpn.conf` (copy
+`find_vpn.conf.example`), sourced fresh on every run - same reasoning as
+`config.json`.
+
 ## Requirements
 
 - Python 3 with the packages in `requirements.txt` (`pip install -r requirements.txt`)
@@ -63,11 +76,18 @@ adjusting to a ProtonVPN page change doesn't require editing code.
 4. Wire that command into cron on whatever schedule you want the fastest
    server re-checked.
 
+If using `find_vpn.sh` instead of/in addition to `update_pfsense.py`: copy
+`find_vpn.sh` and `find_vpn.conf.example` to the pfSense box, `cp
+find_vpn.conf.example find_vpn.conf` there and fill it in, `chmod 600
+find_vpn.conf`, and make sure `IP_FILE` matches wherever the scraper's
+output actually lands on that box.
+
 ## Security notes
 
-- `config.json` contains your ProtonVPN password, mailbox password, TOTP
-  secret, and pfSense API key in plaintext. Keep it `chmod 600` and never
-  commit it (it's gitignored here for exactly that reason).
+- `config.json` and `find_vpn.conf` contain your ProtonVPN password,
+  mailbox password, TOTP secret, and/or pfSense API key in plaintext. Keep
+  them `chmod 600` and never commit them (both are gitignored here for
+  exactly that reason).
 - If a pfSense API key is ever exposed (committed, logged, pasted
   somewhere public), rotate it immediately in the pfSense REST API package
   settings.
